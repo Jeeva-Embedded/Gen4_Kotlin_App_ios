@@ -1,0 +1,214 @@
+name: iOS Build
+
+# ── Trigger summary ──────────────────────────────────────────────────────────
+#  push / PR  → Job 1 (simulator build — free, no Apple account)
+#  manual     → Job 1 always + optionally Job 2 or Job 3
+#
+#  Job 1: Simulator build       — always free, proves code compiles
+#  Job 2: Unsigned device IPA   — free; install via Sideloadly on Windows
+#  Job 3: Signed device IPA     — requires $99/yr Apple Developer account
+# ─────────────────────────────────────────────────────────────────────────────
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+    inputs:
+      unsigned_ipa:
+        description: "Build unsigned IPA (install via Sideloadly — free)"
+        type: boolean
+        default: false
+      signed_ipa:
+        description: "Build signed IPA (needs Apple Developer account secrets)"
+        type: boolean
+        default: false
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Job 1 — Simulator build (always runs, completely free)
+# ─────────────────────────────────────────────────────────────────────────────
+jobs:
+  simulator-build:
+    name: "1 · Simulator Build (free)"
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select latest stable Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build for simulator
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project Gen4Spinning.xcodeproj \
+            -scheme Gen4Spinning \
+            -sdk iphonesimulator \
+            -destination "platform=iOS Simulator,name=iPhone 15,OS=latest" \
+            -configuration Debug \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            | xcpretty --color && exit "${PIPESTATUS[0]}"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Job 2 — Unsigned IPA (FREE path)
+#
+# No Apple account or secrets needed.
+# After download, sign + install on iPhone using Sideloadly (Windows):
+#   https://sideloadly.io  →  drag IPA → enter Apple ID → Install
+#
+# Limitation: app expires every 7 days, must re-sign via USB.
+# ─────────────────────────────────────────────────────────────────────────────
+  unsigned-ipa:
+    name: "2 · Unsigned IPA (free / Sideloadly)"
+    runs-on: macos-14
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.unsigned_ipa == true }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select latest stable Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build unsigned archive
+        run: |
+          set -o pipefail
+          xcodebuild archive \
+            -project Gen4Spinning.xcodeproj \
+            -scheme Gen4Spinning \
+            -sdk iphoneos \
+            -archivePath "$RUNNER_TEMP/Gen4Spinning.xcarchive" \
+            -configuration Release \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            | xcpretty --color && exit "${PIPESTATUS[0]}"
+
+      - name: Package as IPA
+        run: |
+          APP_PATH=$(find "$RUNNER_TEMP/Gen4Spinning.xcarchive" -name "*.app" | head -1)
+          mkdir -p "$RUNNER_TEMP/ipa/Payload"
+          cp -r "$APP_PATH" "$RUNNER_TEMP/ipa/Payload/"
+          cd "$RUNNER_TEMP/ipa"
+          zip -r Gen4Spinning-unsigned.ipa Payload
+          rm -rf Payload
+
+      - name: Upload unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Gen4Spinning-Unsigned-IPA
+          path: ${{ runner.temp }}/ipa/Gen4Spinning-unsigned.ipa
+          retention-days: 30
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Job 3 — Signed IPA ($99/yr Apple Developer account required)
+#
+# Required GitHub Secrets (Settings → Secrets → Actions):
+#   BUILD_CERTIFICATE_BASE64    base64 of .p12  (see README for Windows steps)
+#   P12_PASSWORD                password set during .p12 export
+#   KEYCHAIN_PASSWORD           any string, e.g. tempkeychain123
+#   PROVISIONING_PROFILE_BASE64 base64 of .mobileprovision
+#   PROVISIONING_PROFILE_NAME   profile name from developer.apple.com
+#   APPLE_TEAM_ID               10-char ID from developer.apple.com/account
+# ─────────────────────────────────────────────────────────────────────────────
+  signed-ipa:
+    name: "3 · Signed IPA (Apple Developer account)"
+    runs-on: macos-14
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.signed_ipa == true }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select latest stable Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Import signing certificate
+        env:
+          BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
+          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          CERT_PATH="$RUNNER_TEMP/cert.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/signing.keychain-db"
+          echo -n "$BUILD_CERTIFICATE_BASE64" | base64 --decode -o "$CERT_PATH"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERT_PATH" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+
+      - name: Install provisioning profile
+        env:
+          PROVISIONING_PROFILE_BASE64: ${{ secrets.PROVISIONING_PROFILE_BASE64 }}
+        run: |
+          PP_PATH="$RUNNER_TEMP/profile.mobileprovision"
+          echo -n "$PROVISIONING_PROFILE_BASE64" | base64 --decode -o "$PP_PATH"
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+          cp "$PP_PATH" ~/Library/MobileDevice/Provisioning\ Profiles/
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Patch ExportOptions.plist with team ID
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: sed -i '' "s/TEAM_ID_PLACEHOLDER/${APPLE_TEAM_ID}/" ExportOptions.plist
+
+      - name: Archive
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          PROVISIONING_PROFILE_NAME: ${{ secrets.PROVISIONING_PROFILE_NAME }}
+        run: |
+          set -o pipefail
+          xcodebuild archive \
+            -project Gen4Spinning.xcodeproj \
+            -scheme Gen4Spinning \
+            -sdk iphoneos \
+            -archivePath "$RUNNER_TEMP/Gen4Spinning.xcarchive" \
+            -configuration Release \
+            DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
+            PROVISIONING_PROFILE_SPECIFIER="$PROVISIONING_PROFILE_NAME" \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGNING_REQUIRED=YES \
+            CODE_SIGNING_ALLOWED=YES \
+            | xcpretty --color && exit "${PIPESTATUS[0]}"
+
+      - name: Export IPA
+        run: |
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/Gen4Spinning.xcarchive" \
+            -exportOptionsPlist ExportOptions.plist \
+            -exportPath "$RUNNER_TEMP/ipa"
+
+      - name: Upload signed IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Gen4Spinning-Signed-IPA
+          path: ${{ runner.temp }}/ipa/*.ipa
+          retention-days: 30
