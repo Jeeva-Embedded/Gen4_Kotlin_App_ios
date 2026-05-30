@@ -118,7 +118,7 @@ class BtSessionManager: NSObject, ObservableObject {
     // MARK: - Frame accumulator (identical logic to ExternalAccessory version)
 
     private func processAccumulator() {
-        var acc = inputAccumulator
+        let acc = inputAccumulator
         var searchFrom = acc.startIndex
         var consumed   = acc.startIndex
 
