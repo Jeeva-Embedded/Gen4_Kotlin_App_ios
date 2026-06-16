@@ -3,8 +3,11 @@ import SwiftUI
 struct RingDashboard: View {
     @StateObject private var vm: RingViewModel
     @State private var selectedTab = 0
+    @State private var showPid = false
+    private let session: BtSessionManager
 
     init(session: BtSessionManager) {
+        self.session = session
         _vm = StateObject(wrappedValue: RingViewModel(session: session))
     }
 
@@ -30,7 +33,7 @@ struct RingDashboard: View {
 
             Group {
                 switch selectedTab {
-                case 0: RingSettingsView(vm: vm, onNavigatePid: {})
+                case 0: RingSettingsView(vm: vm, onNavigatePid: { showPid = true })
                 case 1: RingStatusView(vm: vm)
                 case 2: RingOptionsView(vm: vm)
                 case 3: RingTestsView(vm: vm)
@@ -40,5 +43,8 @@ struct RingDashboard: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .navigationBarHidden(true)
+        .sheet(isPresented: $showPid) {
+            PidView(machine: "ring", session: session)
+        }
     }
 }

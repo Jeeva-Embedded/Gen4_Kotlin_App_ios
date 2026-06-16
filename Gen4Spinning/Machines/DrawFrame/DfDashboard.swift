@@ -3,8 +3,11 @@ import SwiftUI
 struct DfDashboard: View {
     @StateObject private var vm: DfViewModel
     @State private var selectedTab = 0
+    @State private var showPid = false
+    private let session: BtSessionManager
 
     init(session: BtSessionManager) {
+        self.session = session
         _vm = StateObject(wrappedValue: DfViewModel(session: session))
     }
 
@@ -30,7 +33,7 @@ struct DfDashboard: View {
 
             Group {
                 switch selectedTab {
-                case 0: DfSettingsView(vm: vm, onNavigatePid: {})
+                case 0: DfSettingsView(vm: vm, onNavigatePid: { showPid = true })
                 case 1: DfStatusView(vm: vm)
                 case 2: DfOptionsView(vm: vm)
                 case 3: DfTestsView(vm: vm)
@@ -40,5 +43,8 @@ struct DfDashboard: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .navigationBarHidden(true)
+        .sheet(isPresented: $showPid) {
+            PidView(machine: "df", session: session)
+        }
     }
 }

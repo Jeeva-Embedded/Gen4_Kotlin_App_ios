@@ -4,8 +4,10 @@ struct FlyerDashboard: View {
     @StateObject private var vm: FlyerViewModel
     @State private var selectedTab = 0
     @State private var showPid = false
+    private let session: BtSessionManager
 
     init(session: BtSessionManager) {
+        self.session = session
         _vm = StateObject(wrappedValue: FlyerViewModel(session: session))
     }
 
@@ -53,8 +55,7 @@ struct FlyerDashboard: View {
         }
         .navigationBarHidden(true)
         .sheet(isPresented: $showPid) {
-            Text("PID Settings — Coming Soon")
-                .font(.title2).padding()
+            PidView(machine: "flyer", session: session)
         }
     }
 }

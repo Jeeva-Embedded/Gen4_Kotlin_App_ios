@@ -3,8 +3,11 @@ import SwiftUI
 struct CardingDashboard: View {
     @StateObject private var vm: CardingViewModel
     @State private var selectedTab = 0
+    @State private var showPid = false
+    private let session: BtSessionManager
 
     init(session: BtSessionManager) {
+        self.session = session
         _vm = StateObject(wrappedValue: CardingViewModel(session: session))
     }
 
@@ -30,7 +33,7 @@ struct CardingDashboard: View {
 
             Group {
                 switch selectedTab {
-                case 0: CardingSettingsView(vm: vm, onNavigatePid: {})
+                case 0: CardingSettingsView(vm: vm, onNavigatePid: { showPid = true })
                 case 1: CardingStatusView(vm: vm)
                 case 2: CardingOptionsView(vm: vm)
                 case 3: CardingTestsView(vm: vm)
@@ -40,5 +43,8 @@ struct CardingDashboard: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .navigationBarHidden(true)
+        .sheet(isPresented: $showPid) {
+            PidView(machine: "carding", session: session)
+        }
     }
 }
